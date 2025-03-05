@@ -1,26 +1,14 @@
-//
 // main.js
-//
+
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const puppeteer = require('puppeteer');
-
-// Whether to run Puppeteer in headless mode for each usage:
 const HEADLESS_BIDDING = false;   // Bidding in non-headless
 const HEADLESS_EXTRACTION = true; // Extraction in headless
 
-/** 
- * (NEW) We’ll capture Puppeteer’s local Chromium executable path at startup.
- * If you have configured "asarUnpack" in your package.json for puppeteer/.local-chromium,
- * puppeteer.executablePath() should already point to the correct unpacked location.
- */
-let PUPPETEER_EXEC_PATH = puppeteer.executablePath();
-console.log('[Startup] Puppeteer default executablePath =>', PUPPETEER_EXEC_PATH);
 
-/**
- * A helper to locate the user’s credentials/auctions data on disk.
- */
+/** We'll define a "credentials.json" in the userData path. */
 function getCredentialsFilePath() {
   const userDataPath = app.getPath('userData');
   return path.join(userDataPath, 'credentials.json');
@@ -51,11 +39,7 @@ function saveData({ credentials, auctions }) {
   const filePath = getCredentialsFilePath();
   console.log('[IO] saveData =>', filePath);
   try {
-    fs.writeFileSync(
-      filePath,
-      JSON.stringify({ credentials, auctions }, null, 2),
-      'utf8'
-    );
+    fs.writeFileSync(filePath, JSON.stringify({ credentials, auctions }, null, 2), 'utf8');
     return true;
   } catch (err) {
     console.error('[IO] saveData error =>', err);
@@ -85,13 +69,6 @@ function createWindow() {
 app.whenReady().then(() => {
   console.log('[App] app.whenReady()');
   createWindow();
-
-  if (app.isPackaged) {
-    // In production builds, Puppeteer’s path is typically under
-    // "app.asar.unpacked/node_modules/puppeteer/.local-chromium"
-    console.log('[Startup] Running in packaged mode => Puppeteer exe path:', PUPPETEER_EXEC_PATH);
-  }
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -144,8 +121,8 @@ function convertCivicSourceUrlToIdAuction(fullUrl) {
 }
 
 /* ====================== BIDDING LOGIC ====================== */
-const browserMap = {};    // Track each user’s open browser
-const bidTimeouts = [];   // Track scheduled bids (timers)
+const browserMap = {};
+const bidTimeouts = [];
 
 async function ensureLoggedIn(username, password, page) {
   if (browserMap[username].isLoggedIn) {
@@ -217,31 +194,29 @@ async function placeBid(auction, page) {
     console.error('[Bidding] placeBid error =>', err);
   }
 }
-
 async function handleUserBids(cred, userAuctions) {
-  // Filter out auctions that have a bidProxy of 0 (no bids needed).
+  // Filter out auctions that have a bidProxy of 0 so we don't even attempt a login or bid.
   const auctionsToBid = userAuctions.filter(a => parseFloat(a.bidProxy) > 0);
+
+  // If there are no auctions with a positive bidProxy, skip the rest entirely.
   if (!auctionsToBid.length) {
-    console.log(`[Bidding] Skipping ${cred.username} => all auctions are 0 or not valid bids.`);
+    console.log(`[Bidding] Skipping ${cred.username} => all auctions are 0 or no valid bids.`);
     return;
   }
 
   const { username, password } = cred;
-  // Launch a browser for this user if we haven't already.
   if (!browserMap[username]) {
-    const br = await puppeteer.launch({
-      headless: HEADLESS_BIDDING,
-      executablePath: PUPPETEER_EXEC_PATH // (NEW) Use the local Chromium
-    });
+    const br = await puppeteer.launch({ headless: HEADLESS_BIDDING});
     const pg = await br.newPage();
     browserMap[username] = { browser: br, page: pg, isLoggedIn: false };
   }
-
   const { page } = browserMap[username];
+
+  // First ensure we're logged in (only once).
   await ensureLoggedIn(username, password, page);
 
-  // For each auction, either schedule or place the bid immediately
   for (const auction of auctionsToBid) {
+    // timeToBid check
     if (!auction.timeToBid) {
       console.log(`[Bidding] Auction ${auction.idAuction} => no time => skip`);
       continue;
@@ -252,7 +227,7 @@ async function handleUserBids(cred, userAuctions) {
     const diff = targetTime - now;
 
     if (diff <= 0) {
-      // Place the bid immediately
+      // place immediately
       await placeBid(auction, page);
     } else {
       console.log(`[Bidding] Scheduling => ${auction.idAuction} in ${diff}ms`);
@@ -263,6 +238,8 @@ async function handleUserBids(cred, userAuctions) {
     }
   }
 }
+
+
 /* ====================== IPC: Credentials & Auctions ====================== */
 ipcMain.handle('get-credentials', () => {
   console.log('[IPC] get-credentials');
@@ -272,12 +249,8 @@ ipcMain.handle('get-credentials', () => {
 
 ipcMain.handle('save-credentials', (event, updatedCreds) => {
   console.log('[IPC] save-credentials');
-  // Load existing data from disk (for the auctions)
   const { credentials, auctions } = loadData();
-  // Attempt to save the updated credentials
-  const success = saveData({ credentials: updatedCreds, auctions });
-  // Return a boolean so renderer knows success/failure
-  return !!success;
+  return saveData({ credentials: updatedCreds, auctions });
 });
 
 ipcMain.handle('get-auctions', () => {
@@ -289,9 +262,7 @@ ipcMain.handle('get-auctions', () => {
 ipcMain.handle('save-auctions', (event, updatedAuctions) => {
   console.log('[IPC] save-auctions');
   const { credentials, auctions } = loadData();
-  // Attempt to save updated auctions
-  const success = saveData({ credentials, auctions: updatedAuctions });
-  return !!success;
+  return saveData({ credentials, auctions: updatedAuctions });
 });
 
 /* ====================== Bidding: fetch-auctions-data ====================== */
@@ -308,17 +279,13 @@ ipcMain.handle('fetch-auctions-data', async () => {
     return auctions;
   }
 
-  // Group auctions by account username
   const auctionsByAccount = {};
   for (const auc of auctions) {
     if (!auc.account) continue;
-    if (!auctionsByAccount[auc.account]) {
-      auctionsByAccount[auc.account] = [];
-    }
+    if (!auctionsByAccount[auc.account]) auctionsByAccount[auc.account] = [];
     auctionsByAccount[auc.account].push(auc);
   }
 
-  // For each credential, bid on relevant auctions
   const tasks = [];
   for (const cred of credentials) {
     const userAuctions = auctionsByAccount[cred.username];
@@ -329,6 +296,7 @@ ipcMain.handle('fetch-auctions-data', async () => {
   await Promise.all(tasks);
   return auctions;
 });
+
 
 /* ====================== stop-update / close-all-windows ====================== */
 ipcMain.handle('stop-update', async () => {
@@ -357,11 +325,7 @@ ipcMain.handle('extract-properties', async (event, urlToExtract) => {
   console.log('[IPC] extract-properties =>', urlToExtract);
   let addedCount = 0;
 
-  // (NEW) Launch Puppeteer specifying the local Chromium path
-  const browser = await puppeteer.launch({
-    headless: HEADLESS_EXTRACTION,
-    executablePath: PUPPETEER_EXEC_PATH
-  });
+  const browser = await puppeteer.launch({ headless: HEADLESS_EXTRACTION });
   const page = await browser.newPage();
 
   const downloadDir = path.join(__dirname, 'downloads');
@@ -381,7 +345,6 @@ ipcMain.handle('extract-properties', async (event, urlToExtract) => {
     await page.click(linkSelector);
 
     let csvPath = '';
-    // Wait up to ~20 seconds for the CSV to appear
     for (let i = 0; i < 20; i++) {
       const files = fs.readdirSync(downloadDir);
       const csvFile = files.find(f => f.toLowerCase().endsWith('.csv'));
@@ -411,7 +374,6 @@ ipcMain.handle('extract-properties', async (event, urlToExtract) => {
       throw parseErr;
     }
 
-    // Excel sometimes puts = in front of fields, remove it if present
     for (const row of records) {
       for (const [key, val] of Object.entries(row)) {
         if (typeof val === 'string' && val.startsWith('=')) {
@@ -488,10 +450,6 @@ ipcMain.handle('save-properties-locally', async () => {
     return 'Save canceled.';
   }
   const { credentials, auctions } = loadData();
-  fs.writeFileSync(
-    res.filePath,
-    JSON.stringify({ credentials, auctions }, null, 2),
-    'utf8'
-  );
+  fs.writeFileSync(res.filePath, JSON.stringify({ credentials, auctions }, null, 2), 'utf8');
   return `Saved successfully to ${res.filePath}`;
 });

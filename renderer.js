@@ -53,6 +53,7 @@ function updateESTClock() {
 }
 updateESTClock();
 setInterval(updateESTClock, 1000);
+
 /* ===================== CREDENTIALS SECTION ===================== */
 const credentialTableBody = document.querySelector('#credentialTable tbody');
 const usernameInput = document.getElementById('username');
@@ -61,10 +62,7 @@ const addCredentialBtn = document.getElementById('addCredentialBtn');
 
 let credentialsList = [];
 
-/**
- * Load credentials from main, set `credentialsList`, re-render table,
- * and populate the account <select>.
- */
+/** Load credentials from main, re-render, and update the account <select> */
 async function loadAndRenderCredentials() {
   credentialsList = await ipcRenderer.invoke('get-credentials');
   renderCredentialsTable();
@@ -84,6 +82,7 @@ function renderCredentialsTable() {
     userTd.addEventListener('blur', async () => {
       credentialsList[index].username = userTd.textContent.trim();
       await saveCredentials();
+      populateAccountSelect(); // if changed, re-populate
     });
     tr.appendChild(userTd);
 
@@ -112,36 +111,27 @@ function renderCredentialsTable() {
   });
 }
 
-/** Adds or updates credentialsList on disk, then re-fetches from main. */
+async function removeCredential(id) {
+  // no confirm() => we can do a confirm dialog:
+  const ok = await showConfirmBox('Are you sure you want to remove this credential?', 'Remove?');
+  if (!ok) return;
+
+  credentialsList = credentialsList.filter((c) => c.id !== id);
+  const success = await ipcRenderer.invoke('save-credentials', credentialsList);
+  if (!success) {
+    await showMessageBox('Error removing credential.', 'Error');
+  } else {
+    await loadAndRenderCredentials();
+  }
+}
+
 async function saveCredentials() {
   const success = await ipcRenderer.invoke('save-credentials', credentialsList);
   if (!success) {
     await showMessageBox('Error saving credentials.', 'Error');
-    return;
   }
-  // If success, re-fetch from main to ensure we have the latest from disk
-  await loadAndRenderCredentials();
 }
 
-/** Remove a credential, then re-fetch from main. */
-async function removeCredential(id) {
-  const ok = await showConfirmBox('Are you sure you want to remove this credential?', 'Remove?');
-  if (!ok) return;
-
-  // Remove locally
-  credentialsList = credentialsList.filter(c => c.id !== id);
-
-  // Attempt to save the updated list
-  const success = await ipcRenderer.invoke('save-credentials', credentialsList);
-  if (!success) {
-    await showMessageBox('Error removing credential.', 'Error');
-    return;
-  }
-  // Re-fetch from main
-  await loadAndRenderCredentials();
-}
-
-/** Click handler for "Add Credential" button */
 addCredentialBtn.addEventListener('click', async () => {
   const userVal = usernameInput.value.trim();
   const passVal = passwordInput.value.trim();
@@ -150,43 +140,34 @@ addCredentialBtn.addEventListener('click', async () => {
     return;
   }
 
-  // Make a new ID
   const maxId = credentialsList.reduce((acc, c) => Math.max(acc, c.id || 0), 0);
   const newId = maxId + 1;
-  credentialsList.push({ id: newId, username: userVal, password: passVal });
 
-  // Save to main
+  const newCred = { id: newId, username: userVal, password: passVal };
+  credentialsList.push(newCred);
+
   const success = await ipcRenderer.invoke('save-credentials', credentialsList);
   if (!success) {
     await showMessageBox('Error saving credentials.', 'Error');
     return;
   }
 
-  // Clear form
   usernameInput.value = '';
   passwordInput.value = '';
-
-  // Re-fetch from main
   await loadAndRenderCredentials();
 });
+
 /** Fill <select> #auctionAccountSelect with the current credentials. */
-async function populateAccountSelect() {
-  // Re-fetch from main
-  await loadAndRenderCredentials();
-  
+function populateAccountSelect() {
   const accountSelect = document.getElementById('auctionAccountSelect');
   if (!accountSelect) return;
 
-  // Clear existing options
   accountSelect.innerHTML = '';
-
-  // Add a placeholder option
   const placeholderOpt = document.createElement('option');
   placeholderOpt.value = '';
   placeholderOpt.textContent = '(Select Account)';
   accountSelect.appendChild(placeholderOpt);
 
-  // Populate from the freshly updated credentialsList
   credentialsList.forEach((cred) => {
     const opt = document.createElement('option');
     opt.value = cred.username;
