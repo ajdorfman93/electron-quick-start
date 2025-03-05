@@ -1,10 +1,14 @@
 {
   "name": "electron-quick-start",
-  "version": "1.0.0",
+  "productName": "Civic Source Auto Bids",
+  "author": "Citron",
+  "version": "1.1.0",
   "description": "A minimal Electron application",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder",    
+    "postinstall": "npx puppeteer browsers install"
   },
   "repository": "https://github.com/electron/electron-quick-start",
   "keywords": [
@@ -14,9 +18,31 @@
     "tutorial",
     "demo"
   ],
-  "author": "GitHub",
   "license": "CC0-1.0",
+  
   "devDependencies": {
-    "electron": "^34.0.2"
+    "electron": "^33.3.1",
+    "electron-builder": "^24.6.5"
+  },
+  
+  "build": {
+    "appId": "com.Citron.CivicSourceAutoBids",
+    "productName": "Civic Source Auto Bids",
+    "directories": {
+      "buildResources": "buildResources",
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "Icon.png"
+    },
+    "asarUnpack": [
+      "node_modules/puppeteer/.local-chromium"
+    ]
+  },
+  
+  "dependencies": {
+    "csv-parse": "^5.6.0",
+    "puppeteer": "^24.2.0"
   }
 }
